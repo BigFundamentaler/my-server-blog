@@ -1,0 +1,116 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model categories {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String            @unique
+  slug             String            @unique
+  description      String?
+  parentId         String?           @db.Uuid
+  categories       categories?       @relation("categoriesTocategories", fields: [parentId], references: [id])
+  other_categories categories[]      @relation("categoriesTocategories")
+  post_categories  post_categories[]
+}
+
+model comments {
+  id             String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  content        String
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime
+  postId         String     @db.Uuid
+  authorId       String     @db.Uuid
+  parentId       String?    @db.Uuid
+  users          users      @relation(fields: [authorId], references: [id])
+  comments       comments?  @relation("commentsTocomments", fields: [parentId], references: [id])
+  other_comments comments[] @relation("commentsTocomments")
+  posts          posts      @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+}
+
+model likes {
+  id     String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId String @db.Uuid
+  postId String @db.Uuid
+  posts  posts  @relation(fields: [postId], references: [id], onDelete: Cascade)
+  users  users  @relation(fields: [userId], references: [id])
+
+  @@unique([userId, postId])
+}
+
+model post_categories {
+  postId     String     @db.Uuid
+  categoryId String     @db.Uuid
+  categories categories @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  posts      posts      @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([postId, categoryId])
+}
+
+model post_tags {
+  postId String @db.Uuid
+  tagId  String @db.Uuid
+  posts  posts  @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tags   tags   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, tagId])
+}
+
+model posts {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title           String
+  slug            String            @unique
+  content         String?
+  excerpt         String?
+  coverImage      String?
+  published       Boolean           @default(false)
+  publishedAt     DateTime?
+  viewCount       Int               @default(0)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime
+  authorId        String            @db.Uuid
+  comments        comments[]
+  likes           likes[]
+  post_categories post_categories[]
+  post_tags       post_tags[]
+  users           users             @relation(fields: [authorId], references: [id])
+
+  @@index([authorId])
+  @@index([published, createdAt])
+}
+
+model profiles {
+  id       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bio      String?
+  website  String?
+  location String?
+  birthday DateTime?
+  userId   String    @unique @db.Uuid
+  users    users     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model tags {
+  id        String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String      @unique
+  slug      String      @unique
+  color     String?
+  post_tags post_tags[]
+}
+
+model users {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email     String     @unique
+  username  String     @unique
+  firstName String?
+  lastName  String?
+  avatar    String?
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime
+  comments  comments[]
+  likes     likes[]
+  posts     posts[]
+  profiles  profiles?
+}
