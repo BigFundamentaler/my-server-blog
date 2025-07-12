@@ -1,0 +1,31 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+    commands:
+      - npm install -g @nestjs/cli
+      - npm install
+  
+  pre_build:
+    commands:
+      - echo Installing dependencies...
+      - npm run db:generate
+  
+  build:
+    commands:
+      - echo Building the application...
+      - npm run build:lambda
+  
+  post_build:
+    commands:
+      - echo Build completed on `date`
+
+artifacts:
+  files:
+    - dist/**/*
+    - node_modules/**/*
+    - template.yaml
+    - package.json
+    - package-lock.json

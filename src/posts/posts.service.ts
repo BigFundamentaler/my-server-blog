@@ -15,7 +15,7 @@ export class PostsService {
   }) {
     const slug = data.title.toLowerCase().replace(/\s+/g, '-');
     
-    return this.prisma.post.create({
+    return this.prisma.posts.create({
       data: {
         ...data,
         slug,
@@ -36,7 +36,7 @@ export class PostsService {
 
   // 获取所有文章
   async findAll() {
-    return this.prisma.post.findMany({
+    return this.prisma.posts.findMany({
       include: {
         author: {
           select: {
@@ -61,7 +61,7 @@ export class PostsService {
 
   // 获取已发布文章
   async findPublished() {
-    return this.prisma.post.findMany({
+    return this.prisma.posts.findMany({
       where: { published: true },
       include: {
         author: {
@@ -87,7 +87,7 @@ export class PostsService {
 
   // 获取单篇文章
   async findOne(id: string) {
-    const post = await this.prisma.post.findUnique({
+    const post = await this.prisma.posts.findUnique({
       where: { id },
       include: {
         author: {
@@ -141,7 +141,7 @@ export class PostsService {
     }
 
     // 增加浏览量
-    await this.prisma.post.update({
+    await this.prisma.posts.update({
       where: { id },
       data: { viewCount: { increment: 1 } },
     });
@@ -151,7 +151,7 @@ export class PostsService {
 
   // 更新文章
   async update(id: string, data: any) {
-    return this.prisma.post.update({
+    return this.prisma.posts.update({
       where: { id },
       data,
       include: {
@@ -169,7 +169,7 @@ export class PostsService {
 
   // 删除文章
   async remove(id: string) {
-    await this.prisma.post.delete({
+    await this.prisma.posts.delete({
       where: { id },
     });
     return { message: '文章删除成功' };
