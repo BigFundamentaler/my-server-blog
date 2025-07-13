@@ -1,0 +1,355 @@
+# 指定CloudFormation模板的版本格式
+AWSTemplateFormatVersion: '2010-09-09'
+# 使用SAM（Serverless Application Model）转换，简化无服务器应用部署
+Transform: AWS::Serverless-2016-10-31
+# 模板描述信息
+Description: >
+  NestJS Blog API with Lambda Layers
+
+# 全局配置，应用于所有Lambda函数
+Globals:
+  Function:
+    Timeout: 30                    # 函数超时时间30秒
+    Runtime: nodejs20.x            # Node.js运行时版本
+    Architectures:                 # 指定架构
+      - x86_64                     # 使用x86_64架构
+    Environment:                   # 环境变量配置
+      Variables:
+        NODE_ENV: production       # 设置Node.js环境为生产模式
+
+# 参数定义，部署时可以自定义这些值
+Parameters:
+  DBUsername:                      # 数据库用户名参数
+    Type: String                   # 参数类型为字符串
+    Default: blogadmin             # 默认值
+    Description: Database master username  # 参数描述
+  DBPassword:                      # 数据库密码参数
+    Type: String                   # 参数类型为字符串
+    NoEcho: true                   # 不在控制台显示此参数值（安全考虑）
+    Description: Database master password  # 参数描述
+  DBName:                          # 数据库名称参数
+    Type: String                   # 参数类型为字符串
+    Default: blogdb                # 默认值
+    Description: Database name     # 参数描述
+
+# 资源定义，定义要创建的AWS资源
+Resources:
+  # Lambda Layer用于存储node_modules依赖包
+  NodeModulesLayer:
+    Type: AWS::Serverless::LayerVersion    # SAM中的Layer版本类型
+    Properties:
+      LayerName: BlogApiNodeModules        # Layer名称
+      Description: Node modules for Blog API  # Layer描述
+      ContentUri: layers/nodejs/           # Layer内容的本地路径
+      CompatibleRuntimes:                  # 兼容的运行时
+        - nodejs20.x                       # 兼容Node.js 20.x
+      RetentionPolicy: Retain              # 删除策略：保留
+    Metadata:                              # 元数据配置
+      BuildMethod: nodejs20.x              # 构建方法
+      BuildProperties:                     # 构建属性
+        DestinationDirectory: /opt/nodejs  # 目标目录
+
+  # Prisma Layer（包含 Prisma Client 和二进制文件）
+  PrismaLayer:
+    Type: AWS::Serverless::LayerVersion    # SAM中的Layer版本类型
+    Properties:
+      LayerName: BlogApiPrisma             # Layer名称
+      Description: Prisma client and binaries  # Layer描述
+      ContentUri: layers/prisma/           # Layer内容的本地路径
+      CompatibleRuntimes:                  # 兼容的运行时
+        - nodejs20.x                       # 兼容Node.js 20.x
+      RetentionPolicy: Retain              # 删除策略：保留
+
+  # VPC网络配置
+  BlogVPC:
+    Type: AWS::EC2::VPC                    # VPC资源类型
+    Properties:
+      CidrBlock: 10.0.0.0/16               # VPC的IP地址范围
+      EnableDnsHostnames: true             # 启用DNS主机名
+      EnableDnsSupport: true               # 启用DNS支持
+      Tags:                                # 标签
+        - Key: Name                        # 标签键
+          Value: BlogVPC                   # 标签值
+
+  # 互联网网关，用于VPC访问互联网
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway        # 互联网网关资源类型
+    Properties:
+      Tags:                                # 标签
+        - Key: Name                        # 标签键
+          Value: BlogIGW                   # 标签值
+
+  # 将互联网网关附加到VPC
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment   # VPC网关附加资源类型
+    Properties:
+      VpcId: !Ref BlogVPC                  # 引用上面创建的VPC
+      InternetGatewayId: !Ref InternetGateway  # 引用上面创建的互联网网关
+
+  # 私有子网1 - 用于部署Lambda函数和RDS数据库
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet                 # 子网资源类型
+    Properties:
+      VpcId: !Ref BlogVPC                  # 所属VPC
+      CidrBlock: 10.0.1.0/24               # 子网IP地址范围
+      AvailabilityZone: !Select [0, !GetAZs '']  # 选择第一个可用区
+      Tags:                                # 标签
+        - Key: Name                        # 标签键
+          Value: PrivateSubnet1            # 标签值
+
+  # 私有子网2 - 用于RDS高可用性配置
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet                 # 子网资源类型
+    Properties:
+      VpcId: !Ref BlogVPC                  # 所属VPC
+      CidrBlock: 10.0.2.0/24               # 子网IP地址范围
+      AvailabilityZone: !Select [1, !GetAZs '']  # 选择第二个可用区
+      Tags:                                # 标签
+        - Key: Name                        # 标签键
+          Value: PrivateSubnet2            # 标签值
+
+  # 私有子网3 - 用于RDS高可用性配置
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet                 # 子网资源类型
+    Properties:
+      VpcId: !Ref BlogVPC                  # 所属VPC
+      CidrBlock: 10.0.3.0/24               # 子网IP地址范围
+      AvailabilityZone: !Select [2, !GetAZs '']  # 选择第三个可用区
+      Tags:                                # 标签
+        - Key: Name                        # 标签键
+          Value: PrivateSubnet3            # 标签值
+
+  # 公有子网 - 用于部署NAT网关
+  PublicSubnet:
+    Type: AWS::EC2::Subnet                 # 子网资源类型
+    Properties:
+      VpcId: !Ref BlogVPC                  # 所属VPC
+      CidrBlock: 10.0.4.0/24               # 子网IP地址范围
+      AvailabilityZone: !Select [0, !GetAZs '']  # 选择第一个可用区
+      MapPublicIpOnLaunch: true            # 自动分配公网IP
+      Tags:                                # 标签
+        - Key: Name                        # 标签键
+          Value: PublicSubnet              # 标签值
+
+  # NAT网关的弹性IP地址
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP                    # 弹性IP资源类型
+    DependsOn: AttachGateway               # 依赖于网关附加完成
+    Properties:
+      Domain: vpc                          # 指定为VPC域
+
+  # NAT网关，允许私有子网访问互联网
+  NATGateway:
+    Type: AWS::EC2::NatGateway             # NAT网关资源类型
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId  # 分配的弹性IP ID
+      SubnetId: !Ref PublicSubnet          # 部署在公有子网中
+
+  # 公有子网路由表
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable             # 路由表资源类型
+    Properties:
+      VpcId: !Ref BlogVPC                  # 所属VPC
+      Tags:                                # 标签
+        - Key: Name                        # 标签键
+          Value: PublicRouteTable          # 标签值
+
+  # 私有子网路由表
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable             # 路由表资源类型
+    Properties:
+      VpcId: !Ref BlogVPC                  # 所属VPC
+      Tags:                                # 标签
+        - Key: Name                        # 标签键
+          Value: PrivateRouteTable         # 标签值
+
+  # 公有子网路由规则 - 将流量路由到互联网网关
+  PublicRoute:
+    Type: AWS::EC2::Route                  # 路由资源类型
+    DependsOn: AttachGateway               # 依赖于网关附加完成
+    Properties:
+      RouteTableId: !Ref PublicRouteTable  # 路由表ID
+      DestinationCidrBlock: 0.0.0.0/0      # 目标地址（所有流量）
+      GatewayId: !Ref InternetGateway      # 网关ID
+
+  # 私有子网路由规则 - 将流量路由到NAT网关
+  PrivateRoute:
+    Type: AWS::EC2::Route                  # 路由资源类型
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable # 路由表ID
+      DestinationCidrBlock: 0.0.0.0/0      # 目标地址（所有流量）
+      NatGatewayId: !Ref NATGateway        # NAT网关ID
+
+  # 将公有子网关联到公有路由表
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation  # 子网路由表关联资源类型
+    Properties:
+      SubnetId: !Ref PublicSubnet          # 子网ID
+      RouteTableId: !Ref PublicRouteTable  # 路由表ID
+
+  # 将私有子网1关联到私有路由表
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation  # 子网路由表关联资源类型
+    Properties:
+      SubnetId: !Ref PrivateSubnet1        # 子网ID
+      RouteTableId: !Ref PrivateRouteTable # 路由表ID
+
+  # 将私有子网2关联到私有路由表
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation  # 子网路由表关联资源类型
+    Properties:
+      SubnetId: !Ref PrivateSubnet2        # 子网ID
+      RouteTableId: !Ref PrivateRouteTable # 路由表ID
+
+  # 将私有子网3关联到私有路由表
+  PrivateSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation  # 子网路由表关联资源类型
+    Properties:
+      SubnetId: !Ref PrivateSubnet3        # 子网ID
+      RouteTableId: !Ref PrivateRouteTable # 路由表ID
+
+  # Lambda函数安全组
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup          # 安全组资源类型
+    Properties:
+      GroupDescription: Security group for Lambda functions  # 安全组描述
+      VpcId: !Ref BlogVPC                  # 所属VPC
+      SecurityGroupEgress:                 # 出站规则
+        - IpProtocol: -1                   # 所有协议
+          CidrIp: 0.0.0.0/0                # 允许访问所有地址
+
+  # RDS数据库安全组
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup          # 安全组资源类型
+    Properties:
+      GroupDescription: Security group for RDS  # 安全组描述
+      VpcId: !Ref BlogVPC                  # 所属VPC
+      SecurityGroupIngress:                # 入站规则
+        - IpProtocol: tcp                  # TCP协议
+          FromPort: 5432                   # 起始端口（PostgreSQL默认端口）
+          ToPort: 5432                     # 结束端口
+          SourceSecurityGroupId: !Ref LambdaSecurityGroup  # 来源安全组（只允许Lambda访问）
+
+  # RDS数据库子网组
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup          # 数据库子网组资源类型
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS  # 子网组描述
+      SubnetIds:                           # 子网ID列表
+        - !Ref PrivateSubnet1              # 私有子网1
+        - !Ref PrivateSubnet2              # 私有子网2
+        - !Ref PrivateSubnet3              # 私有子网3
+
+  # RDS PostgreSQL数据库实例
+  PostgresDB:
+    Type: AWS::RDS::DBInstance             # RDS实例资源类型
+    DeletionPolicy: Snapshot               # 删除策略：创建快照
+    Properties:
+      DBInstanceIdentifier: blog-postgres-db  # 数据库实例标识符
+      AllocatedStorage: '20'               # 分配存储空间（GB）
+      DBInstanceClass: db.t3.micro         # 实例规格
+      Engine: postgres                     # 数据库引擎
+      EngineVersion: '15.8'                # 引擎版本
+      MasterUsername: !Ref DBUsername      # 主用户名（引用参数）
+      MasterUserPassword: !Ref DBPassword  # 主用户密码（引用参数）
+      DBName: !Ref DBName                  # 数据库名称（引用参数）
+      VPCSecurityGroups:                   # VPC安全组
+        - !Ref RDSSecurityGroup            # RDS安全组
+      DBSubnetGroupName: !Ref DBSubnetGroup  # 数据库子网组
+      BackupRetentionPeriod: 7             # 备份保留期（天）
+
+  # Lambda函数（现在更小，因为依赖在 Layers 中）
+  BlogApiFunction:
+    Type: AWS::Serverless::Function        # SAM Lambda函数资源类型
+    Properties:
+      CodeUri: ./dist/                     # 代码目录
+      Handler: lambda.handler              # 处理程序入口点
+      MemorySize: 512                      # 内存大小（MB）
+      Layers:                              # 使用的Layer
+        - !Ref NodeModulesLayer            # Node.js模块Layer
+        - !Ref PrismaLayer                 # Prisma Layer
+      Environment:                         # 环境变量
+        Variables:
+          # 数据库连接URL，使用Sub函数动态构建
+          DATABASE_URL: !Sub "postgresql://${DBUsername}:${DBPassword}@${PostgresDB.Endpoint.Address}:${PostgresDB.Endpoint.Port}/${DBName}"
+          # Node.js模块路径
+          NODE_PATH: "/opt/nodejs/node_modules:/opt/nodejs/prisma"
+      VpcConfig:                           # VPC配置
+        SecurityGroupIds:                  # 安全组ID
+          - !Ref LambdaSecurityGroup       # Lambda安全组
+        SubnetIds:                         # 子网ID
+          - !Ref PrivateSubnet1            # 私有子网1
+          - !Ref PrivateSubnet2            # 私有子网2
+          - !Ref PrivateSubnet3            # 私有子网3
+      Events:                              # 事件源配置
+        ApiEvent:                          # API事件
+          Type: Api                        # 事件类型
+          Properties:
+            RestApiId: !Ref BlogApiGateway # API Gateway ID
+            Path: /{proxy+}                # 路径（代理所有路径）
+            Method: ANY                    # HTTP方法（所有方法）
+
+  # API Gateway配置（包含CORS）
+  BlogApiGateway:
+    Type: AWS::Serverless::Api             # SAM API Gateway资源类型
+    Properties:
+      StageName: prod                      # 部署阶段名称
+      Cors:                                # CORS配置
+        AllowOrigin: "'*'"                 # 允许的来源
+        AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"  # 允许的头部
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"  # 允许的HTTP方法
+
+  # CloudFront分发配置
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution    # CloudFront分发资源类型
+    Properties:
+      DistributionConfig:                  # 分发配置
+        Enabled: true                      # 启用分发
+        Origins:                           # 源配置
+          - Id: ApiGatewayOrigin           # 源ID
+            # 源域名，使用Sub函数动态构建
+            DomainName: !Sub "${BlogApiGateway}.execute-api.${AWS::Region}.amazonaws.com"
+            OriginPath: /prod              # 源路径
+            CustomOriginConfig:            # 自定义源配置
+              HTTPPort: 80                 # HTTP端口
+              HTTPSPort: 443               # HTTPS端口
+              OriginProtocolPolicy: https-only  # 源协议策略（仅HTTPS）
+        DefaultCacheBehavior:              # 默认缓存行为
+          TargetOriginId: ApiGatewayOrigin # 目标源ID
+          ViewerProtocolPolicy: redirect-to-https  # 查看器协议策略（重定向到HTTPS）
+          AllowedMethods:                  # 允许的方法
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:                   # 缓存的方法
+            - GET
+            - HEAD
+            - OPTIONS
+          Compress: true                   # 启用压缩
+          ForwardedValues:                 # 转发的值
+            QueryString: true              # 转发查询字符串
+            Headers:                       # 转发的头部
+              - Authorization
+              - Content-Type
+              - Origin
+              - Referer
+
+# 输出值，部署完成后返回的信息
+Outputs:
+  ApiGatewayUrl:                           # API Gateway URL输出
+    Description: API Gateway endpoint URL  # 描述
+    # 使用Sub函数动态构建URL
+    Value: !Sub "https://${BlogApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod"
+  
+  CloudFrontUrl:                           # CloudFront URL输出
+    Description: CloudFront distribution URL  # 描述
+    # 使用Sub函数动态构建URL
+    Value: !Sub "https://${CloudFrontDistribution.DomainName}"
+  
+  DatabaseEndpoint:                        # 数据库端点输出
+    Description: RDS PostgreSQL endpoint  # 描述
+    Value: !GetAtt PostgresDB.Endpoint.Address  # 获取数据库端点地址
